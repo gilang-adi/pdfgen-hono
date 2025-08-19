@@ -60,13 +60,21 @@ export const buildTableInvoice = (data: InvoiceData): Content => {
           alignment: 'right',
           border: [true, false, true, false],
         },
-        { text: '', alignment: 'center', border: [true, false, true, false] }, // uom tidak ada di JSON
         {
-          text: formatAmount(0),
+          text: item.uom_name,
+          alignment: 'center',
+          border: [true, false, true, false],
+        },
+        {
+          text: formatAmount(item.item_amount),
           alignment: 'right',
           border: [true, false, true, false],
         },
-        { text: '', alignment: 'center', border: [true, false, true, false] }, // disc tidak ada di items
+        {
+          text: formatAmount(item.discount_amount),
+          alignment: 'center',
+          border: [true, false, true, false],
+        },
         {
           text: formatAmount(item.payer_amount),
           alignment: 'right',
