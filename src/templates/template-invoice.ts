@@ -11,6 +11,22 @@ export const buildInvoice = (): TDocumentDefinitions => {
   return {
     pageSize: 'A4',
     pageMargins: [30, 200, 30, 140],
+    background: (currentPage: number, pageSize: { orientation: string, width: number, height: number }) => {
+    return {
+      canvas: [
+        {
+          type: 'rect',
+          x: 0,
+          y: 0,
+          w: pageSize.width,
+          h: pageSize.height,
+          lineWidth: 15,
+          lineColor: '#002060',
+        },
+      ],
+    }
+  },
+
     header: () => buildHeader(dummy.data),
     content: [
       buildTableInvoice(dummy.data),
