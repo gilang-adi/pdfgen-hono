@@ -11,7 +11,6 @@ export const buildTableInvoice = (data: InvoiceData): Content => {
     { text: 'Name', border: [false, true, false, true] },
     {
       text: 'Description',
-      alignment: 'right',
       border: [false, true, true, true],
     },
     { text: 'Qty' },
@@ -72,7 +71,7 @@ export const buildTableInvoice = (data: InvoiceData): Content => {
         },
         {
           text: formatAmount(item.discount_amount),
-          alignment: 'center',
+          alignment: 'right',
           border: [true, false, true, false],
         },
         {
@@ -87,6 +86,46 @@ export const buildTableInvoice = (data: InvoiceData): Content => {
         },
       ]);
     });
+
+    // Add subtotal row for each group
+    body.push([
+      { text: '', border: [true, false, true, false] },
+      {
+        text: `${group.sales_item_type_name} Sub Total:`,
+        colSpan: 2,
+        alignment: 'right',
+        bold: true,
+        border: [true, false, false, false],
+      },
+
+      { text: '', border: [true, false, true, false] },
+      { text: '', border: [true, false, true, false] },
+      { text: '', border: [true, false, true, false] },
+      {
+        text: formatAmount(group.total_item_amount),
+        alignment: 'right',
+        bold: true,
+        border: [true, false, true, false],
+      },
+      {
+        text: formatAmount(group.total_discount_amount),
+        alignment: 'right',
+        bold: true,
+        border: [true, false, true, false],
+      },
+      {
+        text: formatAmount(group.total_payer_amount),
+        alignment: 'right',
+        bold: true,
+        border: [true, false, true, false],
+      },
+      {
+        text: formatAmount(group.total_patient_amount),
+        alignment: 'right',
+        bold: true,
+        border: [true, false, true, false],
+      },
+    ]);
   });
 
   const summaryRows: TableCell[][] = [
@@ -281,17 +320,7 @@ export const buildTableInvoice = (data: InvoiceData): Content => {
     style: 'tableRow',
     table: {
       headerRows: 1,
-      widths: [
-        'auto',
-        '*',
-        '*',
-        'auto',
-        'auto',
-        'auto',
-        'auto',
-        'auto',
-        'auto',
-      ],
+      widths: ['auto', '*', 80, 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
       body,
     },
   };
