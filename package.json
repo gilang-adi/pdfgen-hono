@@ -3,6 +3,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "stress:queue": "tsx src/stress-test-queue.ts",
+    "stress:direct": "tsx src/stress-test-direct.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },
