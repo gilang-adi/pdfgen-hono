@@ -1,7 +1,9 @@
-import type { Context } from 'hono';
-import PdfPrinter from 'pdfmake';
-import os from 'os';
 import { EventEmitter } from 'events';
+import fs from 'fs';
+import type { Context } from 'hono';
+import os from 'os';
+import path from 'path';
+import PdfPrinter from 'pdfmake';
 
 const fonts = {
   Helvetica: {
@@ -15,7 +17,8 @@ const fonts = {
 interface PdfJob {
   id: string;
   docDefinition: any;
-  resolve: (buffer: Buffer) => void;
+  filename: string;
+  resolve: (stream: NodeJS.ReadableStream) => void;
   reject: (err: Error) => void;
   priority: number;
   createdAt: number;
@@ -41,8 +44,8 @@ class HighVolumePdfQueue extends EventEmitter {
     failed: 0,
     totalProcessingTime: 0,
   };
-  private jobTimeout: number = 60000; // 60 seconds default timeout
-  private maxQueueSize: number = 10000; // Prevent memory overflow
+  private jobTimeout: number;
+  private maxQueueSize: number;
 
   constructor(
     maxConcurrent: number = Math.max(4, os.cpus().length),
@@ -60,17 +63,16 @@ class HighVolumePdfQueue extends EventEmitter {
     console.log(`- Job Timeout: ${jobTimeout}ms`);
     console.log(`- Max Queue Size: ${maxQueueSize}`);
 
-    // Cleanup completed jobs periodically
     setInterval(() => this.cleanup(), 30000);
   }
 
   async render(
     docDefinition: any,
+    filename: string,
     priority: number = 0,
     timeout?: number
-  ): Promise<Buffer> {
+  ): Promise<NodeJS.ReadableStream> {
     return new Promise((resolve, reject) => {
-      // Check queue size limit
       if (this.queue.length >= this.maxQueueSize) {
         reject(new Error('Queue is full. Too many pending requests.'));
         return;
@@ -80,6 +82,7 @@ class HighVolumePdfQueue extends EventEmitter {
       const job: PdfJob = {
         id: jobId,
         docDefinition,
+        filename,
         resolve,
         reject,
         priority,
@@ -145,42 +148,32 @@ class HighVolumePdfQueue extends EventEmitter {
       queueLength: this.queue.length,
     });
 
-    try {
-      // Use setImmediate to prevent blocking the event loop
-      setImmediate(async () => {
-        try {
-          const buffer = await this.generatePdf(job.docDefinition);
+    setImmediate(async () => {
+      try {
+        const pdfStream = this.generatePdf(job.docDefinition, job.filename);
 
-          // Clear job timeout
-          if (job.timeout) {
-            clearTimeout(job.timeout);
-          }
+        if (job.timeout) clearTimeout(job.timeout);
 
-          const processingTime = Date.now() - startTime;
-          this.stats.completed++;
-          this.stats.totalProcessingTime += processingTime;
+        const processingTime = Date.now() - startTime;
+        this.stats.completed++;
+        this.stats.totalProcessingTime += processingTime;
 
-          job.resolve(buffer);
+        job.resolve(pdfStream);
 
-          this.emit('jobCompleted', {
-            jobId: job.id,
-            processingTime,
-            completed: this.stats.completed,
-          });
-        } catch (err) {
-          this.handleJobError(job, err as Error, startTime);
-        } finally {
-          this.processing--;
-          // Continue processing queue
-          if (this.queue.length > 0) {
-            setImmediate(() => this.processQueue());
-          }
+        this.emit('jobCompleted', {
+          jobId: job.id,
+          processingTime,
+          completed: this.stats.completed,
+        });
+      } catch (err) {
+        this.handleJobError(job, err as Error, startTime);
+      } finally {
+        this.processing--;
+        if (this.queue.length > 0) {
+          setImmediate(() => this.processQueue());
         }
-      });
-    } catch (err) {
-      this.handleJobError(job, err as Error, startTime);
-      this.processing--;
-    }
+      }
+    });
   }
 
   private handleJobError(job: PdfJob, error: Error, startTime: number) {
@@ -201,34 +194,24 @@ class HighVolumePdfQueue extends EventEmitter {
     });
   }
 
-  private generatePdf(docDefinition: any): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      try {
-        const pdfDoc = this.printer.createPdfKitDocument(docDefinition);
-        const chunks: Buffer[] = [];
+  private generatePdf(
+    docDefinition: any,
+    filename: string
+  ): NodeJS.ReadableStream {
+    const pdfDoc = this.printer.createPdfKitDocument(docDefinition);
 
-        pdfDoc.on('data', (chunk: Buffer) => {
-          chunks.push(chunk);
-        });
+    const outDir = path.resolve(process.cwd(), 'output');
+    if (!fs.existsSync(outDir)) {
+      fs.mkdirSync(outDir, { recursive: true });
+    }
+    const filePath = path.join(outDir, `${filename}.pdf`);
+    const fileStream = fs.createWriteStream(filePath);
 
-        pdfDoc.on('end', () => {
-          try {
-            const buffer = Buffer.concat(chunks);
-            resolve(buffer);
-          } catch (err) {
-            reject(err);
-          }
-        });
+    pdfDoc.pipe(fileStream);
 
-        pdfDoc.on('error', (err: Error) => {
-          reject(err);
-        });
+    pdfDoc.end();
 
-        pdfDoc.end();
-      } catch (err) {
-        reject(err as Error);
-      }
-    });
+    return pdfDoc;
   }
 
   private generateJobId(): string {
@@ -236,11 +219,9 @@ class HighVolumePdfQueue extends EventEmitter {
   }
 
   private cleanup() {
-    // Force garbage collection if available
     if (global.gc) {
       global.gc();
     }
-
     this.emit('cleanup', {
       completed: this.stats.completed,
       failed: this.stats.failed,
@@ -381,6 +362,27 @@ highVolumePdfQueue.on('jobFailed', (data) => {
   console.error(`PDF Job ${data.jobId} failed: ${data.error}`);
 });
 
+function nodeStreamToWeb(
+  nodeStream: NodeJS.ReadableStream
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      nodeStream.on('data', (chunk) => {
+        controller.enqueue(
+          chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk)
+        );
+      });
+      nodeStream.on('end', () => controller.close());
+      nodeStream.on('error', (err) => controller.error(err));
+    },
+    cancel() {
+      if (typeof (nodeStream as any).destroy === 'function') {
+        (nodeStream as any).destroy();
+      }
+    },
+  });
+}
+
 export async function renderPdfWorker(
   c: Context,
   filename: string,
@@ -389,32 +391,32 @@ export async function renderPdfWorker(
   timeout?: number
 ) {
   try {
-    const buffer = await highVolumePdfQueue.render(
+    const pdfNodeStream = await highVolumePdfQueue.render(
       docDefinition,
+      filename,
       priority,
       timeout
     );
 
+    const pdfStream = nodeStreamToWeb(pdfNodeStream); // konversi ke Web Stream
+
     c.header('Content-Type', 'application/pdf');
     c.header('Content-Disposition', `inline; filename=${filename}.pdf`);
-    return c.body(buffer);
+
+    return c.body(pdfStream);
   } catch (err: any) {
     console.error('PDF render error', err);
 
     if (err.message.includes('Queue is full')) {
       return c.json(
-        {
-          error: 'Server overloaded. Too many PDF generation requests.',
-        },
+        { error: 'Server overloaded. Too many PDF generation requests.' },
         503
       );
     }
 
     if (err.message.includes('timeout')) {
       return c.json(
-        {
-          error: 'PDF generation timeout. Document too complex.',
-        },
+        { error: 'PDF generation timeout. Document too complex.' },
         408
       );
     }
