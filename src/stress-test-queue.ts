@@ -46,7 +46,12 @@ async function stressTestPdfQueue({
 
   const submitJob = async (i: number) => {
     try {
-      await highVolumePdfQueue.render(docDefinition, priority, 30000);
+      await highVolumePdfQueue.render(
+        docDefinition,
+        `inv-${1}`,
+        priority,
+        30000
+      );
       completed++;
       if (i % 50 === 0) console.log(`✅ Job ${i} done`);
     } catch (err: any) {
